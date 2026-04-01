@@ -421,8 +421,8 @@ public class Main {
     private static final int DES_KEY_SIZE = 8;
     private static final int TDES_KEY_SIZE = 24;
     private static final int MIN_PLAINTEXT_LENGTH = 15;
-    private static final int MIN_MASTER_KEY_LENGTH = 1;
-    private static final int MAX_MASTER_KEY_LENGTH = 4096;
+    private static final int MIN_MASTER_KEY_LENGTH = 16;
+    private static final int MAX_MASTER_KEY_LENGTH = 24;
 
     private static final String RANDOM_KEY_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();

@@ -3,6 +3,8 @@ package triple_des;
 import java.awt.Toolkit;
 import java.awt.Dimension;
 import java.awt.datatransfer.StringSelection;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import javax.swing.ButtonGroup;
 import javax.swing.JOptionPane;
 
@@ -13,6 +15,9 @@ import javax.swing.JOptionPane;
 public class MainUI extends javax.swing.JFrame {
     
     private static final java.util.logging.Logger logger = java.util.logging.Logger.getLogger(MainUI.class.getName());
+    private static final int WARM_UP_ROUNDS = 100;
+    private static final double NS_PER_SECOND = 1_000_000_000.0;
+    private static final double BYTES_PER_MB = 1024.0 * 1024.0;
 
     /**
      * Creates new form MainUI
@@ -23,7 +28,7 @@ public class MainUI extends javax.swing.JFrame {
     }
 
     private void initializeUi() {
-        setSize(new Dimension(860, 660));
+        setSize(new Dimension(940, 660));
 
         // Keep a fixed-size window to avoid layout shifts after showing results.
         setResizable(false);
@@ -51,6 +56,11 @@ public class MainUI extends javax.swing.JFrame {
         }
         jButton4.addActionListener(this::jButton4ActionPerformed);
 
+        for (java.awt.event.ActionListener al : jButton3.getActionListeners()) {
+            jButton3.removeActionListener(al);
+        }
+        jButton3.addActionListener(this::jButton3ActionPerformed);
+
         for (java.awt.event.ActionListener al : jRadioButton2.getActionListeners()) {
             jRadioButton2.removeActionListener(al);
         }
@@ -61,27 +71,85 @@ public class MainUI extends javax.swing.JFrame {
         jTextField1.setText("");
         jTextField4.setEditable(false);
         jTextField1.setEditable(false);
-        jTextField4.setBackground(new java.awt.Color(245, 245, 245));
-        jTextField1.setBackground(new java.awt.Color(245, 245, 245));
+        jScrollPane3.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        jScrollPane2.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        jScrollPane1.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         jTextField3.setLineWrap(true);
         jTextField3.setWrapStyleWord(true);
         jTextField4.setLineWrap(true);
-        jTextField4.setWrapStyleWord(false);
+        jTextField4.setWrapStyleWord(true);
         jTextField1.setLineWrap(true);
-        jTextField1.setWrapStyleWord(false);
+        jTextField1.setWrapStyleWord(true);
+        jPanel3.setPreferredSize(new Dimension(400, 260));
+        jPanel4.setPreferredSize(new Dimension(430, 260));
+        jPanel5.setPreferredSize(new Dimension(430, 110));
+        jTextField4.setBackground(new java.awt.Color(245, 245, 245));
+        jTextField1.setBackground(new java.awt.Color(245, 245, 245));
+        jLabel13.setVisible(false);
+        jLabel14.setVisible(false);
         jTextField3.setCaretPosition(0);
         jTextField4.setCaretPosition(0);
         jTextField1.setCaretPosition(0);
         jTextField3.requestFocusInWindow();
         jLabel7.setText("Mã hóa: -");
         jLabel8.setText("Giải mã: -");
-        jLabel14.setText("Kiểm tra: -");
+        jLabel4.setText("So sánh: -");
+        jLabel13.setText("-");
         updateModeUi();
     }
 
-    private static String formatTimingNanos(long nanos) {
-        double ms = nanos / 1_000_000.0;
-        return String.format("%.6f ms (%d ns)", ms, nanos);
+    private static double toSeconds(long nanos) {
+        return nanos / NS_PER_SECOND;
+    }
+
+    private static String formatSeconds(double seconds) {
+        return String.format("%.6f giây", seconds);
+    }
+
+    private static String formatSpeed(double dataSizeBytes, double seconds) {
+        if (seconds <= 0.0) {
+            return "N/A";
+        }
+        double mb = dataSizeBytes / BYTES_PER_MB;
+        return String.format("%.2f MB/s", mb / seconds);
+    }
+
+    private static byte[] parseCipherBytesForStats(String cipherInput) {
+        String normalized = cipherInput.replaceAll("\\s+", "");
+        boolean looksHex = normalized.matches("(?i)[0-9a-f]+") && normalized.length() % 2 == 0;
+
+        if (looksHex) {
+            byte[] out = new byte[normalized.length() / 2];
+            for (int i = 0; i < normalized.length(); i += 2) {
+                int hi = Character.digit(normalized.charAt(i), 16);
+                int lo = Character.digit(normalized.charAt(i + 1), 16);
+                if (hi == -1 || lo == -1) {
+                    throw new IllegalArgumentException("Dữ liệu vào không phải HEX hoặc Base64 hợp lệ.");
+                }
+                out[i / 2] = (byte) ((hi << 4) + lo);
+            }
+            return out;
+        }
+
+        try {
+            return Base64.getDecoder().decode(normalized);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Dữ liệu vào không phải HEX hoặc Base64 hợp lệ.");
+        }
+    }
+
+    private void warmUpEncryptDecrypt(String plainText, String masterKey) {
+        for (int i = 0; i < WARM_UP_ROUNDS; i++) {
+            String warmCipher = Main.encryptToHex(plainText, masterKey);
+            Main.decryptAuto(warmCipher, masterKey);
+        }
+    }
+
+    private void warmUpDecryptOnly(String masterKey) {
+        String warmCipher = Main.encryptToHex("Warm up 3DES text", masterKey);
+        for (int i = 0; i < WARM_UP_ROUNDS; i++) {
+            Main.decryptAuto(warmCipher, masterKey);
+        }
     }
 
     private void updateModeUi() {
@@ -103,12 +171,19 @@ public class MainUI extends javax.swing.JFrame {
         if (key == null || key.isEmpty()) {
             throw new IllegalArgumentException("Khóa không được để trống.");
         }
+        if (key.length() < Main.getMinMasterKeyLength() || key.length() > Main.getMaxMasterKeyLength()) {
+            throw new IllegalArgumentException(
+                "Khóa phải có độ dài từ " + Main.getMinMasterKeyLength() + " đến " + Main.getMaxMasterKeyLength() + " ký tự."
+            );
+        }
         return key;
     }
 
     private void doEncrypt() {
         String plainText = jTextField3.getText();
         String masterKey = requireMasterKey();
+
+        warmUpEncryptDecrypt(plainText, masterKey);
 
         long startEncrypt = System.nanoTime();
         String ciphertextHex = Main.encryptToHex(plainText, masterKey);
@@ -121,30 +196,56 @@ public class MainUI extends javax.swing.JFrame {
         long decryptNs = System.nanoTime() - startDecrypt;
         boolean verifyOk = plainText.equals(decryptedText);
 
+        double encTimeSec = toSeconds(encryptNs);
+        double decTimeSec = toSeconds(decryptNs);
+        double deltaSec = Math.abs(encTimeSec - decTimeSec);
+        double ratio = (Math.min(encTimeSec, decTimeSec) > 0.0)
+            ? Math.max(encTimeSec, decTimeSec) / Math.min(encTimeSec, decTimeSec)
+            : 0.0;
+
+        byte[] plainBytes = plainText.getBytes(StandardCharsets.UTF_8);
+        int cipherByteLength = ciphertextHex.replaceAll("\\s+", "").length() / 2;
+        String encSpeed = formatSpeed(plainBytes.length, encTimeSec);
+        String decSpeed = formatSpeed(cipherByteLength, decTimeSec);
+
+        String compareText;
+        if (encTimeSec == decTimeSec) {
+            compareText = "Mã hóa và giải mã có tốc độ tương đương.";
+        } else if (encTimeSec < decTimeSec) {
+            compareText = String.format("Mã hóa nhanh hơn giải mã %.2f lần.", ratio);
+        } else {
+            compareText = String.format("Giải mã nhanh hơn mã hóa %.2f lần.", ratio);
+        }
+
         jTextField4.setText(ciphertextHex);
         jTextField1.setText(ciphertextBase64);
         jTextField4.setCaretPosition(0);
         jTextField1.setCaretPosition(0);
-        jLabel14.setText(String.format("Kiểm tra: %s (đối chiếu sau giải mã)", verifyOk ? "OK" : "FAIL"));
-        jLabel7.setText("Mã hóa: " + formatTimingNanos(encryptNs));
-        jLabel8.setText("Giải mã: " + formatTimingNanos(decryptNs));
+        jLabel7.setText("Mã hóa: " + formatSeconds(encTimeSec) + " | Tốc độ: " + encSpeed);
+        jLabel8.setText("Giải mã: " + formatSeconds(decTimeSec) + " | Tốc độ: " + decSpeed);
+        jLabel4.setText(compareText);
     }
 
     private void doDecrypt() {
         String cipherHex = jTextField3.getText();
         String masterKey = requireMasterKey();
 
+        byte[] cipherBytes = parseCipherBytesForStats(cipherHex);
+        warmUpDecryptOnly(masterKey);
+
         long startDecrypt = System.nanoTime();
         String decryptedText = Main.decryptAuto(cipherHex, masterKey);
         long decryptNs = System.nanoTime() - startDecrypt;
+        double decTimeSec = toSeconds(decryptNs);
+        String decSpeed = formatSpeed(cipherBytes.length, decTimeSec);
 
         jTextField4.setText(decryptedText);
         jTextField1.setText("");
         jTextField4.setCaretPosition(0);
         jTextField1.setCaretPosition(0);
         jLabel7.setText("Mã hóa: -");
-        jLabel8.setText("Giải mã: " + formatTimingNanos(decryptNs));
-        jLabel14.setText("Kiểm tra: OK (giải mã thành công)");
+        jLabel8.setText("Giải mã: " + formatSeconds(decTimeSec) + " | Tốc độ: " + decSpeed);
+        jLabel4.setText("So sánh: Chỉ đo giải mã ở chế độ hiện tại.");
     }
 
     /**
@@ -161,22 +262,18 @@ public class MainUI extends javax.swing.JFrame {
         jRadioButton1 = new javax.swing.JRadioButton();
         jRadioButton2 = new javax.swing.JRadioButton();
         jLabel1 = new javax.swing.JLabel();
-        jPanel1 = new javax.swing.JPanel();
-        jTextField2 = new javax.swing.JTextField();
-        jLabel4 = new javax.swing.JLabel();
         jLabel3 = new javax.swing.JLabel();
         jPanel2 = new javax.swing.JPanel();
         jButton1 = new javax.swing.JButton();
         jButton2 = new javax.swing.JButton();
-        jButton3 = new javax.swing.JButton();
         jButton4 = new javax.swing.JButton();
         jPanel3 = new javax.swing.JPanel();
         jLabel5 = new javax.swing.JLabel();
-        jScrollPane1 = new javax.swing.JScrollPane();
+        jScrollPane3 = new javax.swing.JScrollPane();
         jTextField3 = new javax.swing.JTextArea();
         jPanel4 = new javax.swing.JPanel();
         jLabel6 = new javax.swing.JLabel();
-        jScrollPane3 = new javax.swing.JScrollPane();
+        jScrollPane1 = new javax.swing.JScrollPane();
         jTextField1 = new javax.swing.JTextArea();
         jLabel10 = new javax.swing.JLabel();
         jLabel11 = new javax.swing.JLabel();
@@ -185,11 +282,14 @@ public class MainUI extends javax.swing.JFrame {
         jPanel5 = new javax.swing.JPanel();
         jLabel7 = new javax.swing.JLabel();
         jLabel8 = new javax.swing.JLabel();
+        jLabel4 = new javax.swing.JLabel();
         jLabel9 = new javax.swing.JLabel();
         jLabel12 = new javax.swing.JLabel();
         jLabel2 = new javax.swing.JLabel();
         jLabel13 = new javax.swing.JLabel();
         jLabel14 = new javax.swing.JLabel();
+        jTextField2 = new javax.swing.JTextField();
+        jButton3 = new javax.swing.JButton();
 
         jPasswordField1.setText("jPasswordField1");
 
@@ -206,36 +306,6 @@ public class MainUI extends javax.swing.JFrame {
         jLabel1.setFont(new java.awt.Font("Segoe UI", 1, 24)); // NOI18N
         jLabel1.setText("3DES");
 
-        jPanel1.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(255, 204, 0)));
-
-        jLabel4.setText("Khóa K:");
-
-        jButton4.setText("Tạo khóa");
-
-        javax.swing.GroupLayout jPanel1Layout = new javax.swing.GroupLayout(jPanel1);
-        jPanel1.setLayout(jPanel1Layout);
-        jPanel1Layout.setHorizontalGroup(
-            jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGroup(jPanel1Layout.createSequentialGroup()
-                .addContainerGap()
-                .addComponent(jLabel4, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                .addGap(18, 18, 18)
-                .addComponent(jTextField2, javax.swing.GroupLayout.PREFERRED_SIZE, 172, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addComponent(jButton4)
-                .addContainerGap())
-        );
-        jPanel1Layout.setVerticalGroup(
-            jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGroup(jPanel1Layout.createSequentialGroup()
-                .addGap(16, 16, 16)
-                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jLabel4)
-                    .addComponent(jTextField2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(jButton4))
-                .addContainerGap(16, Short.MAX_VALUE))
-        );
-
         jLabel3.setFont(new java.awt.Font("Segoe UI", 3, 12)); // NOI18N
         jLabel3.setText("Khóa 3DES:");
 
@@ -245,21 +315,21 @@ public class MainUI extends javax.swing.JFrame {
 
         jButton2.setText("Sao chép KQ");
 
-        jButton3.setText("Thông tin");
-        jButton3.addActionListener(this::jButton3ActionPerformed);
+        jButton4.setText("Thông tin");
+        jButton4.addActionListener(this::jButton4ActionPerformed);
 
         javax.swing.GroupLayout jPanel2Layout = new javax.swing.GroupLayout(jPanel2);
         jPanel2.setLayout(jPanel2Layout);
         jPanel2Layout.setHorizontalGroup(
             jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel2Layout.createSequentialGroup()
-                .addContainerGap()
+                .addContainerGap(23, Short.MAX_VALUE)
                 .addComponent(jButton1)
                 .addGap(18, 18, 18)
                 .addComponent(jButton2)
-                .addGap(30, 30, 30)
-                .addComponent(jButton3)
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addComponent(jButton4)
+                .addGap(17, 17, 17))
         );
         jPanel2Layout.setVerticalGroup(
             jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -268,8 +338,8 @@ public class MainUI extends javax.swing.JFrame {
                 .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(jButton1)
                     .addComponent(jButton2)
-                    .addComponent(jButton3))
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                    .addComponent(jButton4))
+                .addContainerGap(8, Short.MAX_VALUE))
         );
 
         jPanel3.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(255, 102, 0)));
@@ -279,7 +349,7 @@ public class MainUI extends javax.swing.JFrame {
 
         jTextField3.setColumns(20);
         jTextField3.setRows(5);
-        jScrollPane1.setViewportView(jTextField3);
+        jScrollPane3.setViewportView(jTextField3);
 
         javax.swing.GroupLayout jPanel3Layout = new javax.swing.GroupLayout(jPanel3);
         jPanel3.setLayout(jPanel3Layout);
@@ -288,8 +358,8 @@ public class MainUI extends javax.swing.JFrame {
             .addGroup(jPanel3Layout.createSequentialGroup()
                 .addGap(6, 6, 6)
                 .addComponent(jLabel5, javax.swing.GroupLayout.PREFERRED_SIZE, 318, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(16, Short.MAX_VALUE))
-            .addComponent(jScrollPane1, javax.swing.GroupLayout.Alignment.TRAILING)
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+            .addComponent(jScrollPane3, javax.swing.GroupLayout.Alignment.TRAILING)
         );
         jPanel3Layout.setVerticalGroup(
             jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -297,7 +367,7 @@ public class MainUI extends javax.swing.JFrame {
                 .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jLabel5)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 211, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addComponent(jScrollPane3, javax.swing.GroupLayout.PREFERRED_SIZE, 211, javax.swing.GroupLayout.PREFERRED_SIZE))
         );
 
         jPanel4.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(0, 255, 102)));
@@ -307,7 +377,7 @@ public class MainUI extends javax.swing.JFrame {
 
         jTextField1.setColumns(20);
         jTextField1.setRows(5);
-        jScrollPane3.setViewportView(jTextField1);
+        jScrollPane1.setViewportView(jTextField1);
 
         jLabel10.setText("Hex:");
 
@@ -330,12 +400,12 @@ public class MainUI extends javax.swing.JFrame {
                             .addComponent(jLabel10, javax.swing.GroupLayout.PREFERRED_SIZE, 43, javax.swing.GroupLayout.PREFERRED_SIZE))
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                         .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(jScrollPane3, javax.swing.GroupLayout.PREFERRED_SIZE, 237, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(jScrollPane2, javax.swing.GroupLayout.PREFERRED_SIZE, 237, javax.swing.GroupLayout.PREFERRED_SIZE))
+                            .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 285, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addComponent(jScrollPane2, javax.swing.GroupLayout.PREFERRED_SIZE, 285, javax.swing.GroupLayout.PREFERRED_SIZE))
                         .addGap(14, 14, 14))
                     .addGroup(jPanel4Layout.createSequentialGroup()
-                        .addComponent(jLabel6, javax.swing.GroupLayout.PREFERRED_SIZE, 303, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addContainerGap(19, Short.MAX_VALUE))))
+                        .addComponent(jLabel6, javax.swing.GroupLayout.PREFERRED_SIZE, 350, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addContainerGap(6, Short.MAX_VALUE))))
         );
         jPanel4Layout.setVerticalGroup(
             jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -349,7 +419,7 @@ public class MainUI extends javax.swing.JFrame {
                 .addGap(22, 22, 22)
                 .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jLabel11)
-                    .addComponent(jScrollPane3, javax.swing.GroupLayout.PREFERRED_SIZE, 81, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 81, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
 
@@ -359,6 +429,8 @@ public class MainUI extends javax.swing.JFrame {
 
         jLabel8.setText("Giải mã:");
 
+        jLabel4.setText("Mã hóa tốc độ:");
+
         javax.swing.GroupLayout jPanel5Layout = new javax.swing.GroupLayout(jPanel5);
         jPanel5.setLayout(jPanel5Layout);
         jPanel5Layout.setHorizontalGroup(
@@ -367,17 +439,20 @@ public class MainUI extends javax.swing.JFrame {
                 .addGap(12, 12, 12)
                 .addGroup(jPanel5Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jLabel7)
-                    .addComponent(jLabel8))
-                .addContainerGap(219, Short.MAX_VALUE))
+                    .addComponent(jLabel8)
+                    .addComponent(jLabel4))
+                .addContainerGap(240, Short.MAX_VALUE))
         );
         jPanel5Layout.setVerticalGroup(
             jPanel5Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel5Layout.createSequentialGroup()
                 .addGap(15, 15, 15)
                 .addComponent(jLabel7)
-                .addGap(18, 18, 18)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(jLabel8)
-                .addContainerGap(16, Short.MAX_VALUE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(jLabel4)
+                .addContainerGap(17, Short.MAX_VALUE))
         );
 
         jLabel9.setFont(new java.awt.Font("Segoe UI", 1, 12)); // NOI18N
@@ -387,9 +462,14 @@ public class MainUI extends javax.swing.JFrame {
         jLabel12.setText("Cơ sở bảo mật & An toàn thông tin");
 
         jLabel2.setFont(new java.awt.Font("Segoe UI", 1, 12)); // NOI18N
-        jLabel2.setText("Trạng thái:");
+        jLabel2.setText("Thời gian thực hiện:");
 
-        jLabel14.setText("Kiểm tra: -");
+        jLabel14.setText(".");
+
+        jTextField2.addActionListener(this::jTextField2ActionPerformed);
+
+        jButton3.setText("Tạo khóa");
+        jButton3.addActionListener(this::jButton3ActionPerformed);
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
         getContentPane().setLayout(layout);
@@ -398,38 +478,50 @@ public class MainUI extends javax.swing.JFrame {
             .addGroup(layout.createSequentialGroup()
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(layout.createSequentialGroup()
+                        .addGap(30, 30, 30)
+                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(jPanel3, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addGroup(layout.createSequentialGroup()
+                                .addComponent(jLabel3)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(jTextField2, javax.swing.GroupLayout.PREFERRED_SIZE, 200, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(jButton3))))
+                    .addGroup(layout.createSequentialGroup()
+                        .addGap(46, 46, 46)
+                        .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 92, Short.MAX_VALUE)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                        .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
+                            .addComponent(jLabel14, javax.swing.GroupLayout.PREFERRED_SIZE, 43, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                            .addComponent(jLabel13, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                        .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
+                            .addGap(0, 0, Short.MAX_VALUE)
+                            .addComponent(jPanel4, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addGap(44, 44, 44)))
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
+                        .addComponent(jPanel5, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(38, 38, 38))))
+            .addGroup(layout.createSequentialGroup()
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(layout.createSequentialGroup()
                         .addGap(87, 87, 87)
                         .addComponent(jRadioButton1, javax.swing.GroupLayout.PREFERRED_SIZE, 98, javax.swing.GroupLayout.PREFERRED_SIZE)
                         .addGap(43, 43, 43)
                         .addComponent(jRadioButton2, javax.swing.GroupLayout.PREFERRED_SIZE, 98, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addGroup(layout.createSequentialGroup()
-                        .addGap(30, 30, 30)
-                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
-                            .addComponent(jPanel3, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                            .addComponent(jLabel3, javax.swing.GroupLayout.PREFERRED_SIZE, 311, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(jPanel1, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
-                        .addGap(66, 66, 66)
-                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(jPanel4, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING, false)
-                                .addGroup(layout.createSequentialGroup()
-                                    .addComponent(jLabel2)
-                                    .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                    .addComponent(jLabel14, javax.swing.GroupLayout.PREFERRED_SIZE, 230, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                    .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                    .addComponent(jLabel13, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
-                                .addComponent(jPanel5, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
-                    .addGroup(layout.createSequentialGroup()
-                        .addGap(228, 228, 228)
-                        .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addGroup(layout.createSequentialGroup()
-                        .addGap(255, 255, 255)
+                        .addGap(307, 307, 307)
                         .addComponent(jLabel1)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
                             .addComponent(jLabel12, javax.swing.GroupLayout.PREFERRED_SIZE, 187, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(jLabel9, javax.swing.GroupLayout.PREFERRED_SIZE, 187, javax.swing.GroupLayout.PREFERRED_SIZE))))
-                .addContainerGap(24, Short.MAX_VALUE))
+                            .addComponent(jLabel9, javax.swing.GroupLayout.PREFERRED_SIZE, 187, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                    .addGroup(layout.createSequentialGroup()
+                        .addGap(478, 478, 478)
+                        .addComponent(jLabel2)))
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -437,37 +529,61 @@ public class MainUI extends javax.swing.JFrame {
                 .addContainerGap()
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(layout.createSequentialGroup()
+                        .addComponent(jLabel1)
+                        .addGap(33, 33, 33)
+                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                            .addComponent(jRadioButton1)
+                            .addComponent(jRadioButton2)))
+                    .addGroup(layout.createSequentialGroup()
                         .addComponent(jLabel9)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(jLabel12))
-                    .addComponent(jLabel1))
-                .addGap(27, 27, 27)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jRadioButton1)
-                    .addComponent(jRadioButton2))
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addComponent(jLabel12)))
                 .addGap(18, 18, 18)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
                     .addComponent(jPanel4, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(jPanel3, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
-                .addGap(13, 13, Short.MAX_VALUE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 18, Short.MAX_VALUE)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jLabel3)
-                    .addComponent(jLabel2)
                     .addComponent(jLabel13)
-                    .addComponent(jLabel14))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                    .addComponent(jLabel14)
+                    .addComponent(jLabel2))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addGroup(layout.createSequentialGroup()
+                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                            .addComponent(jLabel3)
+                            .addComponent(jTextField2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addComponent(jButton3))
+                        .addGap(32, 32, 32)
+                        .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addComponent(jPanel5, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addGap(18, 18, 18)
-                .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addGap(17, 17, 17))
+                .addGap(47, 47, 47))
         );
 
         pack();
     }// </editor-fold>//GEN-END:initComponents
 
     private void jButton3ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton3ActionPerformed
+        String[] options = {"16 ký tự", "24 ký tự", "Hủy"};
+        int choice = JOptionPane.showOptionDialog(
+            this,
+            "Chọn độ dài khóa ngẫu nhiên",
+            "Tạo khóa 3DES",
+            JOptionPane.DEFAULT_OPTION,
+            JOptionPane.QUESTION_MESSAGE,
+            null,
+            options,
+            options[1]
+        );
+
+        if (choice == 0) {
+            jTextField2.setText(Main.generateRandomMasterKey(16));
+        } else if (choice == 1) {
+            jTextField2.setText(Main.generateRandomMasterKey(24));
+        }
+    }//GEN-LAST:event_jButton3ActionPerformed
+
+    private void jButton4ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton4ActionPerformed
         JOptionPane.showMessageDialog(
             this,
             "MÔ TẢ CHƯƠNG TRÌNH VÀ THUẬT TOÁN 3DES\n\n"
@@ -494,27 +610,7 @@ public class MainUI extends javax.swing.JFrame {
             "Thông tin",
             JOptionPane.INFORMATION_MESSAGE
         );
-    }//GEN-LAST:event_jButton3ActionPerformed
-
-    private void jButton4ActionPerformed(java.awt.event.ActionEvent evt) {
-        String[] options = {"16 ký tự", "24 ký tự", "Hủy"};
-        int choice = JOptionPane.showOptionDialog(
-            this,
-            "Chọn độ dài khóa ngẫu nhiên",
-            "Tạo khóa 3DES",
-            JOptionPane.DEFAULT_OPTION,
-            JOptionPane.QUESTION_MESSAGE,
-            null,
-            options,
-            options[1]
-        );
-
-        if (choice == 0) {
-            jTextField2.setText(Main.generateRandomMasterKey(16));
-        } else if (choice == 1) {
-            jTextField2.setText(Main.generateRandomMasterKey(24));
-        }
-    }
+    }//GEN-LAST:event_jButton4ActionPerformed
 
     private void jRadioButton1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jRadioButton1ActionPerformed
         updateModeUi();
@@ -527,8 +623,13 @@ public class MainUI extends javax.swing.JFrame {
         jTextField3.requestFocusInWindow();
         jLabel7.setText("Mã hóa: -");
         jLabel8.setText("Giải mã: -");
-        jLabel14.setText("Kiểm tra: -");
+        jLabel4.setText("So sánh: -");
+
     }//GEN-LAST:event_jRadioButton1ActionPerformed
+
+    private void jTextField2ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jTextField2ActionPerformed
+        // TODO add your handling code here:
+    }//GEN-LAST:event_jTextField2ActionPerformed
 
     private void jRadioButton2ActionPerformed(java.awt.event.ActionEvent evt) {
         updateModeUi();
@@ -541,7 +642,7 @@ public class MainUI extends javax.swing.JFrame {
         jTextField3.requestFocusInWindow();
         jLabel7.setText("Mã hóa: -");
         jLabel8.setText("Giải mã: -");
-        jLabel14.setText("Kiểm tra: -");
+        jLabel4.setText("So sánh: -");
     }
 
     private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {
@@ -649,7 +750,6 @@ public class MainUI extends javax.swing.JFrame {
     private javax.swing.JLabel jLabel7;
     private javax.swing.JLabel jLabel8;
     private javax.swing.JLabel jLabel9;
-    private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel2;
     private javax.swing.JPanel jPanel3;
     private javax.swing.JPanel jPanel4;
